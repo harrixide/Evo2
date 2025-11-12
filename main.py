@@ -7,49 +7,38 @@ import modal
 
 evo2_image = (
     modal.Image.from_registry(
-        "nvidia/cuda:12.4.0-devel-ubuntu22.04", add_python="3.11"
+        "nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.12"
     )
-#System dependencies
-    .apt_install(
-        [
-            "build-essential", #GCC/G++ toolchain
-            "cmake",           #build system used by C/C++ projects
-            "ninja-build",     # fast build backend used by PyTorch
-            "libcudnn8",       # deep learning kernels (GPU ops)
-            "libcudnn8-dev",   #also kernel for deep learning
-            "git",             #needed for cloning Evo2 repo
-            "gcc",             #compiler
-            "g++",             #compiler
-        ]
-    )
-    .env({
-        "CC": "/usr/bin/gcc",
-        "CXX": "/usr/bin/g++",
-        "PIP_EXTRA_INDEX_URL": "https://wheelnext.astral.sh/simple",  #fix
-    })
+    .env({"FORCE_REBUILD": "v22"})
+    .apt_install([
+        "build-essential",
+        "cmake",
+        "ninja-build",
+        "git",
+        "libcudnn9-dev-cuda-12",
+    ])
+    .env({"CXX": "/usr/bin/g++"})
+    .run_commands("pip install 'torch==2.4.0' --index-url https://download.pytorch.org/whl/cu124") #changed torch to 2.4 instead of just torch
     .run_commands(
-        "git clone --recurse-submodules https://github.com/ArcInstitute/evo2.git "
-        "&& cd evo2 && pip install . && pip install vortex"
+        "pip uninstall -y transformer-engine transformer-engine-cu12 || true",
+        "pip install 'transformer-engine[pytorch]==2.6.0.post1' --no-cache-dir"
     )
     .run_commands(
-        "pip uninstall -y transformer-engine transformer_engine"
+        "pip install packaging",
+        "git clone https://github.com/arcinstitute/evo2 && cd evo2 && pip install -e ."
     )
     .run_commands(
-        "pip install transformer_engine==2.0.0 --no-build-isolation"
+        "pip install wheel",  # Add this line
+        "pip install 'flash-attn==2.7.4.post1' --no-build-isolation"
     )
-    
-    # Remove manual transformer_engine installation
     .pip_install(
-        "biopython",
-        "torch==2.7.0",
-        "fastapi",
-        "uvicorn",
+        "fastapi[standard]",
         "matplotlib",
         "pandas",
         "seaborn",
         "scikit-learn",
         "openpyxl",
-        "modal",
+        "requests",
     )
 )
 
@@ -62,8 +51,8 @@ mount_path = "/root/.cache/huggingface"
 @app.function(gpu="H100", volumes={mount_path: volume}, timeout = 1000) #volumes is a paramater, we want to use gpu and timeout is 1000 seconds aka 15 min until shutdown
 def run_brca1_analysis(): #this will be more expensive to run
 
-    import base64
-    from io import BytesIO
+    import base64 #what is this?
+    from io import BytesIO #For?
     from Bio import SeqIO
     import gzip
     import matplotlib.pyplot as plt
@@ -100,7 +89,7 @@ def run_brca1_analysis(): #this will be more expensive to run
 
     # Convert to two-class system
     brca1_df['class'] = brca1_df['class'].replace(['FUNC', 'INT'], 'FUNC/INT')
-    #load referende genome
+    #load reference genome
     with gzip.open('/evo2/notebooks/brca1/GRCh37.p13_chr17.fna.gz', "rt") as handle:
         for record in SeqIO.parse(handle, "fasta"):
             seq_chr17 = str(record.seq)
@@ -114,10 +103,10 @@ def run_brca1_analysis(): #this will be more expensive to run
     ref_seq_indexes = []
     var_seqs = []
 
-    brca1_subset = brca1_df.iloc[:500].copy()
+    brca1_subset = brca1_df.iloc[:500].copy() #here we choose subset so plot made isn't too extensive for all SVN
 
 
-    for _, row in brca1_subset.iterrows():
+    for _, row in brca1_subset.iterrows(): #what is being done here
         p = row["pos"]-1 # Convert to 0-indexed position
         full_seq = seq_chr17
 
@@ -194,15 +183,31 @@ def run_brca1_analysis(): #this will be more expensive to run
     plot_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     return {'variants': brca1_subset.to_dict(orient="records"), "plot": plot_data, "auroc": auroc}
+#above is the end of run_brca1_analysis function
 
 
 
 @app.function()
 def brca1_example():
+    import base64
+    from io import BytesIO
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
     print("Running BRCA1 variant anlysis with Evo2...")
 
     #Run inference
-    returns = run_brca1_analysis.remote()
+    result = run_brca1_analysis.remote()
+
+    if "plot" in result:
+        plot_data = base64.b64decode(result["plot"])
+        with open("brca1_analysis_plot.png","wb") as f:
+            f.write(plot_data)
+        img = mpimg.imread(BytesIO(plot_data))
+        plt.figure(figsize=(10,5))
+        plt.imshow(img)
+        plt.axis("off")
+        plt.show()
+
 
     #Show plot from returned data
     pass
