@@ -1,6 +1,8 @@
 import sys
 import modal
 
+#Right now, seems that there is an issue with Torch and the Transformer Engine versions, causing the model to fail
+
 #Step 1: System Base (GPU ready foundation)
 #Pulls NVIDIAs official CUDA 12.4 image with ubuntu 22.04 os
 #CUDA allows you to utilize a gpu
